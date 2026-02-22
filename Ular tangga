@@ -1,0 +1,228 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Ular Tangga Multiplayer</title>
+
+<style>
+body{
+  font-family:Arial, sans-serif;
+  text-align:center;
+  background:#f4f6f9;
+}
+h2{margin-top:15px;}
+
+#board{
+  display:grid;
+  grid-template-columns:repeat(10,1fr);
+  max-width:420px;
+  margin:20px auto;
+}
+
+.cell{
+  border:1px solid #ccc;
+  height:42px;
+  font-size:11px;
+  position:relative;
+  display:flex;
+  align-items:flex-start;
+  justify-content:flex-start;
+  padding:2px;
+}
+
+.token{
+  width:16px;
+  height:16px;
+  border-radius:50%;
+  position:absolute;
+}
+
+.p1{background:red; top:2px; right:2px;}
+.p2{background:blue; bottom:2px; left:2px;}
+
+button{
+  padding:8px 15px;
+  margin:5px;
+  cursor:pointer;
+}
+
+input{
+  padding:6px;
+}
+</style>
+</head>
+<body>
+
+<h2>🎮 Ular Tangga Multiplayer</h2>
+
+<button onclick="createRoom()">Create Room</button>
+<input id="roomInput" placeholder="Room ID">
+<button onclick="joinRoom()">Join Room</button>
+
+<p id="roomInfo"></p>
+<p id="status"></p>
+
+<button id="rollBtn" onclick="rollDice()" disabled>Kocok Dadu 🎲</button>
+<button onclick="restartGame()">Restart</button>
+
+<div id="board"></div>
+
+<script type="module">
+import { initializeApp } from "https://www.gstatic.com/firebasejs/9.23.0/firebase-app.js";
+import { getDatabase, ref, set, update, onValue, get }
+from "https://www.gstatic.com/firebasejs/9.23.0/firebase-database.js";
+
+const firebaseConfig = {
+  apiKey: "ISI_API_KEY",
+  authDomain: "ISI_AUTH_DOMAIN",
+  databaseURL: "ISI_DB_URL",
+  projectId: "ISI_PROJECT_ID",
+  storageBucket: "ISI_BUCKET",
+  messagingSenderId: "ISI_SENDER_ID",
+  appId: "ISI_APP_ID"
+};
+
+const app = initializeApp(firebaseConfig);
+const db = getDatabase(app);
+
+let roomId=null;
+let role=null;
+
+const snakes={99:10,95:56,70:50};
+const ladders={3:22,15:44,60:80};
+
+const board=document.getElementById("board");
+
+// Generate board zigzag benar
+for(let row=9;row>=0;row--){
+  let reverse=(row%2===1);
+  for(let col=0;col<10;col++){
+    let number = reverse
+      ? row*10 + col + 1
+      : row*10 + (10-col);
+
+    let cell=document.createElement("div");
+    cell.className="cell";
+    cell.id="cell-"+number;
+    cell.innerText=number;
+    board.appendChild(cell);
+  }
+}
+
+window.createRoom=async function(){
+  roomId=Math.random().toString(36).substring(2,7);
+  role="p1";
+
+  await set(ref(db,"rooms/"+roomId),{
+    players:{
+      p1:{position:1},
+      p2:{position:1}
+    },
+    turn:"p1",
+    winner:null
+  });
+
+  document.getElementById("roomInfo").innerHTML=
+    "Room ID: <b>"+roomId+"</b><br>Share link:<br>"+location.origin+location.pathname+"?room="+roomId;
+
+  listenRoom();
+}
+
+window.joinRoom=async function(){
+  const input=document.getElementById("roomInput").value.trim();
+  if(!input) return alert("Masukkan Room ID!");
+
+  const snap=await get(ref(db,"rooms/"+input));
+  if(!snap.exists()) return alert("Room tidak ditemukan!");
+
+  roomId=input;
+  role="p2";
+  listenRoom();
+}
+
+function listenRoom(){
+  onValue(ref(db,"rooms/"+roomId),(snap)=>{
+    const data=snap.val();
+    if(!data) return;
+
+    updateBoard(data);
+
+    if(data.winner){
+      document.getElementById("status").innerText=
+        data.winner===role?"🎉 Kamu Menang!":"😢 Kamu Kalah!";
+      document.getElementById("rollBtn").disabled=true;
+      return;
+    }
+
+    document.getElementById("rollBtn").disabled=
+      data.turn!==role;
+
+    document.getElementById("status").innerText=
+      data.turn===role?"Giliran Kamu":"Menunggu Lawan...";
+  });
+}
+
+window.rollDice=async function(){
+  if(!roomId) return;
+
+  const snap=await get(ref(db,"rooms/"+roomId));
+  const data=snap.val();
+  if(!data || data.turn!==role) return;
+
+  let dice=Math.floor(Math.random()*6)+1;
+  alert("Dadu: "+dice);
+
+  let pos=data.players[role].position + dice;
+
+  if(pos>100) pos=data.players[role].position;
+  if(snakes[pos]) pos=snakes[pos];
+  if(ladders[pos]) pos=ladders[pos];
+
+  let nextTurn=role==="p1"?"p2":"p1";
+
+  let updateData={
+    ["players/"+role+"/position"]:pos,
+    turn:nextTurn
+  };
+
+  if(pos===100){
+    updateData.winner=role;
+  }
+
+  await update(ref(db,"rooms/"+roomId),updateData);
+}
+
+window.restartGame=async function(){
+  if(!roomId) return;
+
+  await update(ref(db,"rooms/"+roomId),{
+    players:{
+      p1:{position:1},
+      p2:{position:1}
+    },
+    turn:"p1",
+    winner:null
+  });
+}
+
+function updateBoard(data){
+  document.querySelectorAll(".token").forEach(e=>e.remove());
+
+  Object.keys(data.players).forEach(player=>{
+    let pos=data.players[player].position;
+    let token=document.createElement("div");
+    token.className="token "+player;
+    document.getElementById("cell-"+pos)?.appendChild(token);
+  });
+}
+
+// Auto join dari link
+const params=new URLSearchParams(location.search);
+if(params.get("room")){
+  document.getElementById("roomInput").value=params.get("room");
+}
+</script>
+
+</body>
+</html>
